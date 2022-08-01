@@ -156,7 +156,7 @@ def _NumbaDeclareDecorator(input_types, return_type = None, name=None):
         func.numba_func = nbjit
         # return_type = "int"
         if return_type is None:
-            NUMBA_TO_CPP = {
+            type_map = {
                 nb.types.boolean: 'bool',
                 nb.types.uint8: 'unsigned int',
                 nb.types.uint16: 'unsigned int',
@@ -171,10 +171,10 @@ def _NumbaDeclareDecorator(input_types, return_type = None, name=None):
                 nb.types.float64: 'double',
             }
 
-            if nb_return_type in NUMBA_TO_CPP:
-                return_type = NUMBA_TO_CPP[nb_return_type]
+            if nb_return_type in type_map:
+                return_type = type_map[nb_return_type]
             elif "array" in nb.typeof(nb_return_type).name:
-                return_type = "RVec<" + NUMBA_TO_CPP[nb_return_type.dtype] + ">"
+                return_type = "RVec<" + type_map[nb_return_type.dtype] + ">"
         # Create Python wrapper with C++ friendly signature
 
         # Define signature
