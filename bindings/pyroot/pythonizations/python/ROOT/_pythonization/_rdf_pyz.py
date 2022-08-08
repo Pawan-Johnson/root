@@ -350,3 +350,44 @@ def _PyDefine(rdf, col_name, callable_or_str, cols = [] , extra_args = {} ):
     jitter = FunctionJitter(rdf)    
     func_call = jitter.jit_function(func, cols, extra_args)
     return rdf._OriginalDefine(col_name, "Numba::" + func_call)
+
+def _PyRedefine(rdf, col_name, callable_or_str, cols = [] , extra_args = {} ):
+    """
+    ReDefines a new column in the RDataFrame.
+    Arguments:
+    1. col_name: The name of the column to be redefined
+    2. callable_or_str: The definition of the contents of the redefined columns
+        It can be either a python callable or a c style string.
+    3. cols: list of columns that the callable will receive as argument.
+                If not provided then it tries maps the name of the parameter to a column name of the RDF.
+    4. extra_args: non-columnar arguments to be passed to the callable.
+    Returns:
+        RDataFrame: rdf with column redefined
+    """
+    # TODO: Add Examples
+
+    if not isinstance(col_name, str):
+        raise TypeError(f"First argument of Define must be a valid string for the new column name. {type(col_name).__name__} is not a string.")
+
+    if isinstance(callable_or_str, str): # If string argument is passed. Invoke the Original Define.
+        return rdf._OriginalRedefine(col_name, callable_or_str)
+
+    if not callable(callable_or_str): # The 2st argument is either a string or a python callable.
+        raise TypeError(f"The second argument of a Define operation should be a callable. {type(callable_or_str).__name__} object is not callable.")
+    
+    if not isinstance(cols, list):        
+        raise TypeError(f"Define takes a column list as third arguments but {type(cols).__name__} was given.")
+    
+    func = callable_or_str
+    # Check if it is a c++ callable.
+    import libcppyy
+     # Implies a cppyy proxy of a function was passed.
+    if type(callable_or_str) == libcppyy.CPPOverload:
+        return rdf._OriginalRedefine(col_name, func, cols)
+     # Second condition is a Python proxy to an std::function
+    if (isinstance(getattr(callable_or_str, 'target_type', None), libcppyy.CPPOverload)):
+        return rdf._OriginalDefine(callable_or_str, func, cols)
+
+    jitter = FunctionJitter(rdf)    
+    func_call = jitter.jit_function(func, cols, extra_args)
+    return rdf._OriginalRedefine(col_name, "Numba::" + func_call)
