@@ -272,12 +272,12 @@ def _PyFilter(rdf, callable_or_str, *args , extra_args = {} ):
     jitter = FunctionJitter(rdf)
     func.__annotations__['return'] = 'bool' # return type for Filters is bool # Note: You can keep double and Filter still works.
 
-    col_list = []
+    cols = []
     filter_name  = ""
     
     if len(args) == 1:
         if isinstance(args[0], list): 
-            col_list = args[0]
+            cols = args[0]
         elif isinstance(args[0], str):
             filter_name = args[0]
         else:
@@ -285,13 +285,18 @@ def _PyFilter(rdf, callable_or_str, *args , extra_args = {} ):
     
     elif len(args) == 2:
         if isinstance(args[0], list) and isinstance(args[1], str):
-            col_list = args[0] 
+            cols = args[0] 
             filter_name = args[1]
         else:
             raise ValueError(f"Arguments should be ('list', 'str',) not ({type(args[0]).__name__,type(args[1]).__name__}.")
             
-    
-    func_call = jitter.jit_function(func, col_list, extra_args)
+    if hasattr(rdf, 'jitter'):
+        jitter = rdf.jitter
+    else:
+        jitter = FunctionJitter(rdf)
+        rdf.jitter = jitter
+
+    func_call = jitter.jit_function(func, cols, extra_args)
     return rdf._OriginalFilter("Numba::" + func_call, filter_name)
 
 def _PyDefine(rdf, col_name, callable_or_str, cols = [] , extra_args = {} ):
@@ -344,7 +349,11 @@ def _PyDefine(rdf, col_name, callable_or_str, cols = [] , extra_args = {} ):
      # Second condition is a Python proxy to an std::function
     if (isinstance(getattr(callable_or_str, 'target_type', None), libcppyy.CPPOverload)):
         return rdf._OriginalDefine(callable_or_str, func, cols)
-
-    jitter = FunctionJitter(rdf)    
+    
+    if hasattr(rdf, 'jitter'):
+        jitter = rdf.jitter
+    else:
+        jitter = FunctionJitter(rdf) 
+        rdf.jitter = jitter
     func_call = jitter.jit_function(func, cols, extra_args)
     return rdf._OriginalDefine(col_name, "Numba::" + func_call)
