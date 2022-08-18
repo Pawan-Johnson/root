@@ -28,6 +28,7 @@ def _NumbaDeclareDecorator(input_types, return_type = None, name=None):
         import numba as nb
     except:
         raise Exception('Failed to import numba')
+    from ._pythonization._RSampleInfo_pyz import numba_type_of_RSampleInfo
     try:
         import cffi
     except:
@@ -84,7 +85,8 @@ def _NumbaDeclareDecorator(input_types, return_type = None, name=None):
                 'unsigned int': nb.uint32,
                 'long': nb.int64,
                 'unsigned long': nb.uint64,
-                'bool': nb.boolean
+                'bool': nb.boolean,
+                'RSampleInfo': numba_type_of_RSampleInfo()
                 }
         if t in typemap:
             return typemap[t]
@@ -102,6 +104,8 @@ def _NumbaDeclareDecorator(input_types, return_type = None, name=None):
         for t in input_types:
             if 'RVec' in t:
                 c_input_types += [nb.types.CPointer(get_numba_type(get_inner_type(t))), nb.int32]
+            elif 'RSampleInfo' in t:
+                c_input_types += [nb.types.CPointer(nb.types.int8), nb.types.int32, nb.types.uint64, nb.types.uint64]
             else:
                 c_input_types.append(get_numba_type(t))
         if 'RVec' in return_type:
@@ -178,18 +182,32 @@ def _NumbaDeclareDecorator(input_types, return_type = None, name=None):
         # Create Python wrapper with C++ friendly signature
 
         # Define signature
-        pywrapper_signature = [
-                'ptr_{0}, size_{0}'.format(i) if 'RVec' in t else 'x_{}'.format(i) \
-                        for i, t in enumerate(input_types)]
+        pywrapper_signature = []
+        for i, t in enumerate(input_types):
+            if 'RVec' in t:
+                pywrapper_signature +=  ['ptr_{0}, size_{0}'.format(i)]  
+            elif 'RSampleInfo' in t:
+                pywrapper_signature += ['fID_ptr_{0}, fID_size_{0}, fEntryRange_start_{0}, fEntryRange_end_{0}'.format(i)]
+            else:
+                pywrapper_signature +=  ['x_{}'.format(i) ]
+                        
         if 'RVec' in return_type:
             # If we return an RVec, we return via pointer the pointer of the allocated data,
             # the size in elements. In addition, we provide the size of the datatype in bytes.
             pywrapper_signature += ['ptrptr_r, ptrsize_r']
 
         # Define arguments for jit function
-        pywrapper_args_def = [
-                'x_{0} = nb.carray(ptr_{0}, (size_{0},))'.format(i) if 'RVec' in t else 'x_{}'.format(i) \
-                        for i, t in enumerate(input_types)]
+        pywrapper_args_def = []
+        for i, t in enumerate(input_types):
+            if 'RVec' in t:
+                pywrapper_args_def += ['x_{0} = nb.carray(ptr_{0}, (size_{0},))'.format(i) ] 
+            elif 'RSampleInfo' in t:
+                from ._pythonization._RSampleInfo_pyz import RSampleInfo, make_string_from_array
+                
+                pywrapper_args_def += ['x_{0} = RSampleInfo(make_string_from_array(fID_ptr_{0}, fID_size_{0}), (fEntryRange_start_{0}, fEntryRange_end_{0}) )'.format(i)]
+            else :
+                pywrapper_args_def += ['x_{}'.format(i) ]
+
         pywrapper_args = ['x_{}'.format(i) for i in range(len(input_types))]
 
         # Define return operation
@@ -226,10 +244,12 @@ def pywrapper({SIGNATURE}):
                 ARGS=', '.join(pywrapper_args),
                 RETURN=pywrapper_return
                 )
-
         glob = dict(globals()) # Make a shallow copy of the dictionary so we don't pollute the global scope
         glob['nb'] = nb
         glob['nbjit'] = nbjit
+        # ! TODO: Fix This
+        glob['RSampleInfo'] = RSampleInfo
+        glob['make_string_from_array'] = make_string_from_array
 
         ffi = cffi.FFI()
         ffi.cdef('void* malloc(long size);')
@@ -251,11 +271,11 @@ def pywrapper({SIGNATURE}):
         c_return_type, c_input_types = get_c_signature(input_types, return_type)
         try:
             nbcfunc = nb.cfunc(c_return_type(*c_input_types), nopython=True)(locals()['pywrapper'])
-        except:
+        except Exception as e:
             raise Exception('Failed to jit Python wrapper with numba.cfunc')
         func.__py_wrapper__ = pywrappercode
         func.__numba_cfunc__ = nbcfunc
-
+        
         # Get address of jitted wrapper function
         address = nbcfunc.address
 
@@ -266,7 +286,15 @@ def pywrapper({SIGNATURE}):
         # Build C++ wrapper for jitting with cling
 
         # Define input signature
-        input_types_ref = ['ROOT::{}&'.format(t) if 'RVec' in t else t for t in input_types]
+        input_types_ref = []   
+        for t in input_types:
+            if 'RVec' in t:
+                input_types_ref += ['ROOT::{}&'.format(t)]
+            elif 'RSampleInfo' in t:
+                input_types_ref += ['const ROOT::RDF::RSampleInfo&']
+            else: 
+                input_types_ref += [t]
+
         input_signature = ', '.join('{} x_{}'.format(t, i) for i, t in enumerate(input_types_ref))
 
         # Define function pointer types
@@ -279,6 +307,8 @@ def pywrapper({SIGNATURE}):
                     func_ptr_input_types += ['char*, int']
                 else:
                     func_ptr_input_types += ['{}*, int'.format(innert)]
+            elif 'RSampleInfo' in t:
+                func_ptr_input_types += ['char*, long, unsigned long , unsigned long']
             else:
                 func_ptr_input_types += [t]
         if 'RVec' in return_type:
@@ -288,11 +318,12 @@ def pywrapper({SIGNATURE}):
         func_ptr_type = '{RETURN_TYPE}(*)({INPUT_TYPES})'.format(
                 RETURN_TYPE='void*' if 'RVec' in return_type else return_type,
                 INPUT_TYPES=', '.join(func_ptr_input_types)
-                )
+                )         
 
         # Define function call
         vecbool_conversion = []
         func_args = []
+        RSampleInfo_conversion = []
         for i, t in enumerate(input_types):
             if 'RVec' in t:
                 func_args += ['x_{0}.data(), x_{0}.size()'.format(i)]
@@ -300,12 +331,14 @@ def pywrapper({SIGNATURE}):
                     # Copy the RVec<bool> to a RVec<char> to match the numpy memory layout
                     func_args[-1] = func_args[-1].replace('x_', 'xb_')
                     vecbool_conversion += ['ROOT::RVec<char> xb_{0} = x_{0};'.format(i)]
+            elif "RSampleInfo" in t:
+                func_args += ['fID_ptr_{0}, fID_size_{0}, fEntryRange_{0}.first, fEntryRange_{0}.second'.format(i)]
+                RSampleInfo_conversion = ["auto fID_ptr_{0} = (char*) x_{0}.AsString().c_str();\n auto fID_size_{0} = x_{0}.AsString().size();\nauto fEntryRange_{0} = x_{0}.EntryRange();\n".format(i)]
             else:
                 func_args += ['x_{}'.format(i)]
         if 'RVec' in return_type:
             # See C++ wrapper code for the reason using these arguments
             func_args += ['&ptr, &size']
-
         # Define return operation
         if 'RVec' in return_type:
             innert = get_inner_type(return_type)
@@ -334,6 +367,7 @@ namespace Numba {{
     const auto funcptr = reinterpret_cast<{FUNC_PTR_TYPE}>({FUNC_PTR});
     // Perform conversion of RVec<bool>
     {VECBOOL_CONVERSION}
+    {RSAMPLE_CONVERSION}
     // Return the result
     {RETURN_OP}
 }}
@@ -344,6 +378,7 @@ namespace Numba {{
                 FUNC_PTR=address,
                 FUNC_PTR_TYPE=func_ptr_type,
                 VECBOOL_CONVERSION='\n    '.join(vecbool_conversion),
+                RSAMPLE_CONVERSION='\n    '.join(RSampleInfo_conversion),
                 RETURN_OP=return_op)
 
         # Jit wrapper C++ code
