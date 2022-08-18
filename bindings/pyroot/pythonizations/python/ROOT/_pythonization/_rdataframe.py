@@ -422,6 +422,8 @@ def pythonize_rdataframe(klass):
     if sys.version_info >= (3, 7):
         klass._OriginalFilter = klass.Filter
         klass._OriginalDefine = klass.Define
-        from ._rdf_pyz import _PyFilter, _PyDefine
+        klass._OriginalDefinePerSample = klass.DefinePerSample
+        from ._rdf_pyz import _PyFilter, _PyDefine, _PyDefinePerSample
         klass.Filter = _PyFilter
         klass.Define = _PyDefine
+        klass.DefinePerSample = _PyDefinePerSample

@@ -7,6 +7,7 @@
 # For the licensing terms see $ROOTSYS/LICENSE.                                #
 # For the list of contributors see $ROOTSYS/README/CREDITS.                    #
 ################################################################################
+import imp
 import re
 import typing
 import libcppyy
@@ -350,10 +351,25 @@ def _PyDefine(rdf, col_name, callable_or_str, cols = [] , extra_args = {} ):
     if (isinstance(getattr(callable_or_str, 'target_type', None), libcppyy.CPPOverload)):
         return rdf._OriginalDefine(callable_or_str, func, cols)
     
-    if hasattr(rdf, 'jitter'):
-        jitter = rdf.jitter
-    else:
-        jitter = FunctionJitter(rdf) 
-        rdf.jitter = jitter
+    jitter = FunctionJitter(rdf) 
     func_call = jitter.jit_function(func, cols, extra_args)
     return rdf._OriginalDefine(col_name, "Numba::" + func_call)
+
+def _PyDefinePerSample(rdf, col_name, callable_or_str):
+    if isinstance(callable_or_str , str):
+        return rdf._OriginalDefinePerSample(col_name, callable_or_str)
+    if not callable(callable_or_str): # The 2st argument is either a string or a python callable.
+        raise TypeError(f"The second argument of a DefinePerSample operation should be a callable. {type(callable_or_str).__name__} object is not callable.")
+         # Implies a cppyy proxy of a function was passed.
+    func = callable_or_str
+    if type(func) == libcppyy.CPPOverload:
+        return rdf._OriginalDefinePerSample(col_name, func)
+     # Second condition is a Python proxy to an std::function
+    if (isinstance(getattr(func, 'target_type', None), libcppyy.CPPOverload)):
+        return rdf._OriginalDefinePerSample(col_name, func)
+    
+    from .._numbadeclare import _NumbaDeclareDecorator
+
+    #! TODO: Name Lambda Function
+    _NumbaDeclareDecorator(["unsigned int", "RSampleInfo"])(func)
+    return rdf._OriginalDefinePerSample(col_name, "Numba::" + func.__name__ + "(rdfslot_, rdfsampleinfo_)")
