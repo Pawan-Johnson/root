@@ -9,6 +9,7 @@
 ################################################################################
 import re
 import typing
+import libcppyy
 from .._numbadeclare import _NumbaDeclareDecorator
 
 class FunctionJitter:
@@ -44,7 +45,7 @@ class FunctionJitter:
     
     def __init__(self, rdf: 'RDataFrame') -> None:
         self.rdf = rdf
-        self.col_names: typing.List[str] = rdf.GetColumnNames()
+        self.col_names: typing.List[str] = [str(i) for i in rdf.GetColumnNames()]
         self.func: typing.Callable
         self.return_type: str
         self.params: typing.List[str]
@@ -261,7 +262,6 @@ def _PyFilter(rdf, callable_or_str, *args , extra_args = {} ):
     
     func = callable_or_str
     # Check if it is a c++ callable.
-    import libcppyy
      # Implies a cppyy proxy of a function was passed.
     if type(callable_or_str) == libcppyy.CPPOverload:
         return rdf._OriginalFilter(func, *args)
@@ -342,7 +342,7 @@ def _PyDefine(rdf, col_name, callable_or_str, cols = [] , extra_args = {} ):
     
     func = callable_or_str
     # Check if it is a c++ callable.
-    import libcppyy
+
      # Implies a cppyy proxy of a function was passed.
     if type(callable_or_str) == libcppyy.CPPOverload:
         return rdf._OriginalDefine(col_name, func, cols)
